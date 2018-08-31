@@ -9,43 +9,37 @@ set -e  # exit on error
 set -u  # fail on unset variables; not a great error message
 
 # Converts relative to absolute paths
-TARGET=$(readlink -f "$1")
+TARGET=$(sudo readlink -f "$1")
 
 # This will fail if directory not in a btrfs filesystem
 CHILD_SUBVOLS=$(sudo btrfs subvolume list -o "$TARGET")
 
-CURRENT_SUBVOL=$(echo "$CHILD_SUBVOLS" |
+CURRENT_SUBVOL_NAME=$(echo "$CHILD_SUBVOLS" |
                      awk '/\.snapshots$/ {print $NF}' |
-                     sed 's/\/[^/]*$//')
+                     sed 's/\/[^/]\+$//')
 
-if [[ -z "$CURRENT_SUBVOL" ]]; then
+if [[ -z "$CURRENT_SUBVOL_NAME" ]]; then
     echo "FAIL: the directory's subvolume doesn't have snapshots"
     exit 1
 fi
 
-# xargs is used here just to trim whitespace
-CURRENT_SUBVOL_MOUNT=$(snapper list-configs |
-                           awk -F \| "\$1 ~ /${CURRENT_SUBVOL//@}/ {print \$2}" |
-                           xargs)
+CURRENT_SUBVOL_MOUNT=$(echo $CURRENT_SUBVOL_NAME | sed 's/^@/\//')
+CONFIRM_SUBVOL_NAME=$(sudo btrfs subvolume show $CURRENT_SUBVOL_MOUNT |
+                     head --lines=1)
 
-if [[ -z "$CURRENT_SUBVOL_MOUNT" ]]; then
+if [[ $CURRENT_SUBVOL_NAME != $CONFIRM_SUBVOL_NAME ]]; then
     echo "FAIL: unable to determine the subvolume mountpoint"
     exit 1
 fi
 
 REMOVAL_TARGET=${TARGET/${CURRENT_SUBVOL_MOUNT}\/}
 
-if [[ -z "$CURRENT_SUBVOL_MOUNT" ]]; then
-    echo "FAIL: unable to determine the subvolume mountpoint"
-    exit 1
-fi
-
 echo "The current btrfs subvolume for \"$TARGET\""
-echo "is \"$CURRENT_SUBVOL\", mounted at \"$CURRENT_SUBVOL_MOUNT\"."
+echo "is \"$CURRENT_SUBVOL_NAME\", mounted at \"$CURRENT_SUBVOL_MOUNT\"."
 echo "We're going to pass \"$REMOVAL_TARGET\" to \`xargs rm\`"
 
 echo "File attributes you need to manually set with \`chattr\`:"
-lsattr -d "$TARGET"
+sudo lsattr -d "$TARGET"
 
 # We have to collocate $TMP so that it is assigned to the proper parent volume
 TMP="${TARGET}_temp_btrfs_subvol"
